@@ -1,7 +1,9 @@
-/*  GeoRanker MCP Server – v1.5.2  (October‑2025)
-    • API parity: bulk endpoints, deletes, official suggestions
-    • Fixed maxResults constraints + proper synchronous handling
-    • Improved retries (429) and added list_regions tool
+/*  GeoRanker MCP Server – v1.5.4  (October‑2025)
+    • Fix bulk ops: normalize items (device→isMobile, regions, types), post plain arrays
+    • Encode/trim IDs on delete, coerce list IDs to strings
+    • Retries include 500 for flaky endpoints (e.g., technologies)
+    • Adds alias tools: bulk_* → same behavior as create_*_list / get_*_list
+    • Smart Hints: minimal, contextual guidance only when we auto-correct input (GR_HINTS=off to disable)
 ---------------------------------------------------------------- */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -57,20 +59,24 @@ Or in an MCP manifest:
   process.exit(1);
 }
 
+// Smart hints mode: 'auto' (default) → only when we corrected something; 'off' → never add hints.
+const HINTS_MODE = String(process.env.GR_HINTS || 'auto').toLowerCase(); // 'auto' | 'off'
+const SHOULD_HINT = (changed) => HINTS_MODE !== 'off' && !!changed;
+
 const http = axios.create({
   baseURL : API_BASE,
   timeout : 30_000,
-  headers : { 'User-Agent':'GeoRanker-MCP/1.5.2', 'Content-Type':'application/json' },
+  headers : { 'User-Agent':'GeoRanker-MCP/1.5.4', 'Content-Type':'application/json' },
   httpsAgent: new HttpsAgent({ keepAlive:true, maxSockets:64 })
 });
 
 axiosRetry(http, {
   retries: 3,
   retryDelay: axiosRetry.exponentialDelay,
-  // Retry network errors, 5xx, and the documented "Too Many Requests"
+  // Retry network errors, 429, and common transient 5xx
   retryCondition: (err) => {
     const s = err?.response?.status;
-    return axiosRetry.isNetworkOrIdempotentRequestError(err) || s === 429 || s === 502 || s === 504;
+    return axiosRetry.isNetworkOrIdempotentRequestError(err) || s === 429 || s === 500 || s === 502 || s === 504;
   }
 });
 
@@ -107,19 +113,17 @@ const norm = s => String(s||'').trim().toLowerCase();
 /**
  * Accepts:
  *  - numeric id (string/number)
- *  - "ChI..." (kept as-is if you insist, though canonical strings are preferred)
+ *  - "ChI..." (kept as-is)
  *  - ISO2 like "US" / "GB"
  *  - canonical or formatted region names (e.g., "London,England,United Kingdom")
- * Returns one of:
- *  - number (id),
- *  - canonical/formatted string,
- *  - or undefined if not resolvable
+ * Returns:
+ *  - number (id) OR canonical/formatted string (as API accepts both), OR undefined
  */
 async function resolveRegion (input) {
   if (input === undefined || input === null) return undefined;
   if (typeof input === 'number')  return input;
   if (/^\d+$/.test(input))        return Number(input);
-  if (/^ChI/.test(input))         return input; // kept for backwards compat
+  if (/^ChI/.test(input))         return input; // keep
 
   const txt   = String(input);
   const parts = txt.split(/[-_]/);
@@ -159,10 +163,18 @@ function parseLoc (raw) {
 
 const txt = o => [{ type: 'text', text: JSON.stringify(o, null, 2) }];
 
+function withHint(result, hint) {
+  if (!hint) return txt(result);
+  return [
+    ...txt(result),
+    { type: 'text', text: `💡 Hint: ${hint}` }
+  ];
+}
+
 async function buildSerp (p) {
   const loc      = parseLoc(p.region);
   const region   = await resolveRegion(p.region ?? loc.regionCode);
-  return {
+  const out = {
     keyword : p.keyword,
     ...(region !== undefined ? { region } : {}),
     ...(p.language||loc.language ? { language:p.language||loc.language } : {}),
@@ -177,6 +189,7 @@ async function buildSerp (p) {
     ...(p.customCookieParameter ? { customCookieParameter: p.customCookieParameter } : {}),
     ...(p.voiceSearchHighFidelity ? { voiceSearchHighFidelity: !!p.voiceSearchHighFidelity } : {})
   };
+  return out;
 }
 
 async function buildKeyword (base) {
@@ -187,7 +200,7 @@ async function buildKeyword (base) {
     ...(base.url ? { url: base.url } : {}),
     ...(region !== undefined ? { region } : {}),
     ...(base.language||loc.language ? { language: base.language||loc.language } : {}),
-    ...(base.source ? { source: base.source } : {}), // "google" (default) | "baidu"
+    ...(base.source ? { source: base.source } : {}), // google | baidu
     ...(base.searchPartners !== undefined ? { searchPartners: !!base.searchPartners } : {}),
     ...(base.suggestions !== undefined ? { suggestions: !!base.suggestions } : {}),
     ...(base.priority ? { priority: base.priority } : {}),
@@ -225,7 +238,7 @@ async function pollReady (path, timeout=180_000) {
 
 const server = new Server({
   name: 'GeoRanker',
-  version: '1.5.2'
+  version: '1.5.4'
 }, {
   capabilities: {
     tools: {},
@@ -241,6 +254,12 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => ({
       name: 'Available regions',
       description: 'List of all available regions for GeoRanker queries',
       mimeType: 'application/json'
+    },
+    {
+      uri: 'georanker://help',
+      name: 'GeoRanker MCP quick reference',
+      description: 'Short guide on payload shapes & priorities',
+      mimeType: 'text/markdown'
     }
   ]
 }));
@@ -254,6 +273,39 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
         uri: 'georanker://regions',
         mimeType: 'application/json',
         text: JSON.stringify(regions, null, 2)
+      }]
+    };
+  }
+  if (uri === 'georanker://help') {
+    const help = [
+      '# GeoRanker MCP – Quick Reference',
+      '',
+      '**SERP**',
+      '- Single create: POST /serp/new; list create: POST /serp/new/list (body = array of SerpRequest).',
+      '- Use `isMobile` (boolean). If you send `device:"mobile"`, MCP maps it.',
+      '- `maxResults` ≥ 10.',
+      '',
+      '**Keyword**',
+      '- Single: POST /keyword/new; list: POST /keyword/new/list (body = array of KeywordRequest).',
+      '- Official suggestions: set `suggestions:true` in /keyword/new.',
+      '',
+      '**Bulk GET**',
+      '- /serp/list and /keyword/list expect **plain array of string IDs**.',
+      '',
+      '**Delete**',
+      '- DELETE /serp/{id}, /keyword/{id}; 404 may mean expired/unknown id.',
+      '',
+      '**Synchronous**',
+      '- Use `synchronous:true` to send `asynchronous:false` for REALTIME/INSTANT (API blocks ~300s).',
+      '',
+      '**Hints**',
+      '- Server emits short hints only when it auto-corrects your input (set GR_HINTS=off to disable).'
+    ].join('\n');
+    return {
+      contents: [{
+        uri: 'georanker://help',
+        mimeType: 'text/markdown',
+        text: help
       }]
     };
   }
@@ -285,6 +337,7 @@ const tools = [
     description: 'Get technologies used by a domain',
     inputSchema: { type:'object', properties:{ domain:{ type:'string' } }, required:['domain'] }
   },
+
   /* SERP */
   {
     name: 'create_serp',
@@ -295,7 +348,7 @@ const tools = [
         keyword:{ type:'string' },
         region:{ type:'string', description:'Canonical region, ISO2, numeric ID, or "US-en" style' },
         language:{ type:'string' },
-        searchEngine:{ type:'string', description:'e.g., google, bing, yahoo, amazon, yelp, naver, naverwebdocs' },
+        searchEngine:{ type:'string', description:'e.g., google, bing, yahoo, amazon, yelp, naver' },
         maxResults:{ type:'number', minimum:10, description:'Min 10; upper bound depends on engine/plan' },
         priority:{ type:'string', enum:['LOW','NORMAL','REALTIME','INSTANT'] },
         device:{ type:'string', enum:['desktop','mobile'] },
@@ -379,7 +432,7 @@ const tools = [
     }
   },
 
-  /* Official suggestions (replaces local generator) */
+  /* Official suggestions */
   {
     name: 'search_keywords',
     description: 'Generate keyword suggestions via GeoRanker API (official)',
@@ -393,10 +446,95 @@ const tools = [
       },
       required:['seed']
     }
-  }
+  },
+
+  /* Aliases to match common client names (delegated to the same handlers) */
+  { name: 'bulk_create_serp',    description:'Alias of create_serp_list',  inputSchema:{ type:'object', properties:{ requests:{type:'array', items:{type:'object'}}, synchronous:{type:'boolean'} }, required:['requests'] } },
+  { name: 'bulk_get_serp',       description:'Alias of get_serp_list',     inputSchema:{ type:'object', properties:{ ids:{type:'array', items:{type:'string'}} }, required:['ids'] } },
+  { name: 'bulk_create_keyword', description:'Alias of create_keyword_list', inputSchema:{ type:'object', properties:{ requests:{type:'array', items:{type:'object'}}, synchronous:{type:'boolean'} }, required:['requests'] } },
+  { name: 'bulk_get_keyword',    description:'Alias of get_keyword_list',  inputSchema:{ type:'object', properties:{ ids:{type:'array', items:{type:'string'}} }, required:['ids'] } }
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
+
+/* Small helpers for handlers */
+async function handleCreateSerpList(args) {
+  const { requests = [], synchronous = false } = args || {};
+  const items = Array.isArray(requests) ? requests : [];
+  let changedDevice = 0, resolvedRegions = 0;
+  const built = await Promise.all(items.map(async (r) => {
+    if (r && typeof r === 'object' && 'device' in r) changedDevice++;
+    const beforeRegion = r?.region;
+    const payload = await buildSerp(r || {});
+    if (beforeRegion !== payload.region && payload.region !== undefined) resolvedRegions++;
+    return payload;
+  }));
+  const job = await call('/serp/new/list', { method:'POST', data: built });
+  const res = synchronous ? job : { batch_id: job.id || job.batchId || undefined, queued: true, items: items.length };
+  const hintParts = [];
+  if (changedDevice)   hintParts.push(`mapped "device"→"isMobile" for ${changedDevice} item(s)`);
+  if (resolvedRegions) hintParts.push(`resolved region for ${resolvedRegions} item(s)`);
+  const hint = hintParts.length ? `posted as JSON array; ${hintParts.join('; ')}` : '';
+  return withHint(res, SHOULD_HINT(changedDevice || resolvedRegions) ? hint : '');
+}
+
+async function handleGetSerpList(args) {
+  const idsRaw = Array.isArray(args?.ids) ? args.ids : [];
+  let coerced = 0;
+  const ids = idsRaw.map((x) => {
+    const before = x;
+    const after  = String(x ?? '').trim();
+    if (typeof before !== 'string' || before !== after) coerced++;
+    return after;
+  }).filter(Boolean);
+  const out = await call('/serp/list', { method:'POST', data: ids });
+  const hint = coerced ? `coerced ${coerced} id(s) to string and posted plain array` : '';
+  return withHint(out, SHOULD_HINT(coerced) ? hint : '');
+}
+
+async function handleCreateKeywordList(args) {
+  const { requests = [], synchronous = false } = args || {};
+  const items = Array.isArray(requests) ? requests : [];
+  let resolvedRegions = 0;
+  const built = await Promise.all(items.map(async (r) => {
+    const beforeRegion = r?.region;
+    const payload = await buildKeyword(r || {});
+    if (beforeRegion !== payload.region && payload.region !== undefined) resolvedRegions++;
+    return payload;
+  }));
+  const job = await call('/keyword/new/list', { method:'POST', data: built });
+  const res = synchronous ? job : { batch_id: job.id || job.batchId || undefined, queued: true, items: items.length };
+  const hint = resolvedRegions ? `posted as JSON array; resolved region for ${resolvedRegions} item(s)` : '';
+  return withHint(res, SHOULD_HINT(resolvedRegions) ? hint : '');
+}
+
+async function handleGetKeywordList(args) {
+  const idsRaw = Array.isArray(args?.ids) ? args.ids : [];
+  let coerced = 0;
+  const ids = idsRaw.map((x) => {
+    const before = x;
+    const after  = String(x ?? '').trim();
+    if (typeof before !== 'string' || before !== after) coerced++;
+    return after;
+  }).filter(Boolean);
+  const out = await call('/keyword/list', { method:'POST', data: ids });
+  const hint = coerced ? `coerced ${coerced} id(s) to string and posted plain array` : '';
+  return withHint(out, SHOULD_HINT(coerced) ? hint : '');
+}
+
+async function handleDeleteSerp(args) {
+  const id = String(args?.id ?? '').trim();
+  if (!id) throw new Error('Missing id');
+  const out = await call(`/serp/${encodeURIComponent(id)}`, { method:'DELETE' });
+  return withHint(out, SHOULD_HINT(true) ? 'normalized id (trim+encode)' : '');
+}
+
+async function handleDeleteKeyword(args) {
+  const id = String(args?.id ?? '').trim();
+  if (!id) throw new Error('Missing id');
+  const out = await call(`/keyword/${encodeURIComponent(id)}`, { method:'DELETE' });
+  return withHint(out, SHOULD_HINT(true) ? 'normalized id (trim+encode); 404 may mean expired/unknown id' : '');
+}
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
@@ -407,7 +545,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'heartbeat':       return { content: txt(await call('/heartbeat')) };
       case 'get_user':        return { content: txt(await call('/user')) };
 
-      /* Regions */
+      /* Resources */
       case 'list_regions': {
         const params = { apikey: API_KEY };
         if (args?.countryCode) params['countryCode'] = args.countryCode;
@@ -419,30 +557,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'get_whois':        return { content: txt(await call(`/whois/${encodeURIComponent(args.domain)}`)) };
       case 'get_technologies': return { content: txt(await call(`/technologies/${encodeURIComponent(args.domain)}`)) };
 
-      /* SERP */
+      /* SERP single */
       case 'create_serp': {
         const { synchronous = false, ...body } = args || {};
         const payload = await buildSerp(body);
-        // API recommendation: synchronous => asynchronous:false (blocks up to ~300s on REALTIME/INSTANT)
         const job = await call('/serp/new', { method:'POST', data:{ ...payload, ...(synchronous ? { asynchronous:false } : {}) } });
         if (synchronous) return { content: txt(job) }; // API already waited
         return { content: txt({ job_id: job.id, queued: true }) };
       }
       case 'get_serp':        return { content: txt(await call(`/serp/${args.id}`)) };
-      case 'delete_serp':     return { content: txt(await call(`/serp/${args.id}`, { method:'DELETE' })) };
-      case 'create_serp_list': {
-        const { requests = [], synchronous = false } = args || {};
-        // Body must be a JSON array
-        const job = await call('/serp/new/list', { method:'POST', data: requests });
-        if (synchronous) return { content: txt(job) };
-        return { content: txt({ batch_id: job.id || job.batchId || undefined, queued: true, items: requests.length }) };
-      }
-      case 'get_serp_list': {
-        const ids = Array.isArray(args?.ids) ? args.ids : [];
-        return { content: txt(await call('/serp/list', { method:'POST', data: ids })) };
-      }
+      case 'delete_serp':     return { content: await handleDeleteSerp(args) };
 
-      /* Keywords */
+      /* SERP bulk */
+      case 'create_serp_list': return { content: await handleCreateSerpList(args) };
+      case 'get_serp_list':    return { content: await handleGetSerpList(args) };
+
+      /* Keywords single */
       case 'create_keyword': {
         const { synchronous = false, ...rest } = args || {};
         const payload = await buildKeyword(rest);
@@ -451,20 +581,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: txt({ job_id: job.id, queued: true }) };
       }
       case 'get_keyword':    return { content: txt(await call(`/keyword/${args.id}`)) };
-      case 'delete_keyword': return { content: txt(await call(`/keyword/${args.id}`, { method:'DELETE' })) };
-      case 'create_keyword_list': {
-        const { requests = [], synchronous = false } = args || {};
-        // Body must be a JSON array
-        const job = await call('/keyword/new/list', { method:'POST', data: requests });
-        if (synchronous) return { content: txt(job) };
-        return { content: txt({ batch_id: job.id || job.batchId || undefined, queued: true, items: requests.length }) };
-      }
-      case 'get_keyword_list': {
-        const ids = Array.isArray(args?.ids) ? args.ids : [];
-        return { content: txt(await call('/keyword/list', { method:'POST', data: ids })) };
-      }
+      case 'delete_keyword': return { content: await handleDeleteKeyword(args) };
 
-      /* Compare */
+      /* Keywords bulk */
+      case 'create_keyword_list': return { content: await handleCreateKeywordList(args) };
+      case 'get_keyword_list':    return { content: await handleGetKeywordList(args) };
+
+      /* Compare convenience */
       case 'compare_locations': {
         const { keyword, regions, device='desktop', searchEngine, maxResults, language } = args || {};
         const limit = pLimit(3);
@@ -506,6 +629,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: txt({ seed, suggestions, meta: { from:'GeoRanker API' } }) };
       }
 
+      /* Aliases */
+      case 'bulk_create_serp':     return { content: await handleCreateSerpList(args) };
+      case 'bulk_get_serp':        return { content: await handleGetSerpList(args) };
+      case 'bulk_create_keyword':  return { content: await handleCreateKeywordList(args) };
+      case 'bulk_get_keyword':     return { content: await handleGetKeywordList(args) };
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -518,7 +647,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 (async () => {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`✅ GeoRanker MCP v1.5.2 ready${VERBOSE ? ' (verbose)' : ''}`);
+  console.error(`✅ GeoRanker MCP v1.5.4 ready${VERBOSE ? ' (verbose)' : ''}`);
 })();
 
 process.on('SIGINT', () => process.exit(0));
