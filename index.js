@@ -1,20 +1,20 @@
-/*  GeoRanker MCP Server – v1.5.1  (June‑2025)
-    • Updated for @modelcontextprotocol/sdk v0.5.0
-    • Fixed import paths and server initialization
------------------------------------------------------------------------- */
+/*  GeoRanker MCP Server – v1.5.2  (October‑2025)
+    • API parity: bulk endpoints, deletes, official suggestions
+    • Fixed maxResults constraints + proper synchronous handling
+    • Improved retries (429) and added list_regions tool
+---------------------------------------------------------------- */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { 
-  ListResourcesRequestSchema, 
+import {
+  ListResourcesRequestSchema,
   ReadResourceRequestSchema,
   ListToolsRequestSchema,
-  CallToolRequestSchema 
+  CallToolRequestSchema
 } from '@modelcontextprotocol/sdk/types.js';
 import axios from 'axios';
 import axiosRetry from 'axios-retry';
 import { HttpsAgent } from 'agentkeepalive';
 import dotenv from 'dotenv';
-import { z } from 'zod';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -36,7 +36,7 @@ function argvKey () {
 
 const API_KEY  = argvKey() || process.env.GEORANKER_API_KEY;
 const API_BASE = (process.env.GEORANKER_API_BASE_URL || 'https://api.highvolume.georanker.com')
-                   .replace(/^http:/, 'https:');     // disallow plain HTTP
+                  .replace(/^http:/, 'https:');     // disallow plain HTTP
 if (!API_KEY) {
   console.error(`
 ❌  GeoRanker API key missing.
@@ -60,10 +60,19 @@ Or in an MCP manifest:
 const http = axios.create({
   baseURL : API_BASE,
   timeout : 30_000,
-  headers : { 'User-Agent':'GeoRanker-MCP/1.5.1', 'Content-Type':'application/json' },
+  headers : { 'User-Agent':'GeoRanker-MCP/1.5.2', 'Content-Type':'application/json' },
   httpsAgent: new HttpsAgent({ keepAlive:true, maxSockets:64 })
 });
-axiosRetry(http, { retries:3, retryDelay:axiosRetry.exponentialDelay });
+
+axiosRetry(http, {
+  retries: 3,
+  retryDelay: axiosRetry.exponentialDelay,
+  // Retry network errors, 5xx, and the documented "Too Many Requests"
+  retryCondition: (err) => {
+    const s = err?.response?.status;
+    return axiosRetry.isNetworkOrIdempotentRequestError(err) || s === 429 || s === 502 || s === 504;
+  }
+});
 
 const VERBOSE = !!process.env.GR_VERBOSE || process.argv.includes('--verbose');
 const vLog    = (...a) => VERBOSE && console.error('[GR-DEBUG]', ...a);
@@ -95,11 +104,22 @@ async function loadRegions () {
 
 const norm = s => String(s||'').trim().toLowerCase();
 
+/**
+ * Accepts:
+ *  - numeric id (string/number)
+ *  - "ChI..." (kept as-is if you insist, though canonical strings are preferred)
+ *  - ISO2 like "US" / "GB"
+ *  - canonical or formatted region names (e.g., "London,England,United Kingdom")
+ * Returns one of:
+ *  - number (id),
+ *  - canonical/formatted string,
+ *  - or undefined if not resolvable
+ */
 async function resolveRegion (input) {
   if (input === undefined || input === null) return undefined;
   if (typeof input === 'number')  return input;
   if (/^\d+$/.test(input))        return Number(input);
-  if (/^ChI/.test(input))         return input;
+  if (/^ChI/.test(input))         return input; // kept for backwards compat
 
   const txt   = String(input);
   const parts = txt.split(/[-_]/);
@@ -115,22 +135,22 @@ async function resolveRegion (input) {
       (r.code===cc||r.countryCode===cc) &&
       (norm(r.canonicalName).includes(norm(tail)) ||
        norm(r.formattedName).includes(norm(tail))));
-    if (hit) return Number(hit.id);
+    if (hit) return Number(hit.id) || hit.canonicalName || hit.formattedName;
   }
   if (parts.length === 1 && cc.length === 2) {
     const hit = regions.find(r => r.code === cc);
-    if (hit) return Number(hit.id);
+    if (hit) return Number(hit.id) || hit.code;
   }
   const nameHit = regions.find(r => norm(r.canonicalName) === norm(txt) ||
                                     norm(r.formattedName) === norm(txt));
-  return nameHit ? Number(nameHit.id) : undefined;
+  return nameHit ? (Number(nameHit.id) || nameHit.canonicalName || nameHit.formattedName) : undefined;
 }
 
 function parseLoc (raw) {
   if (!raw) return {};
   const [cc, maybeLang] = String(raw).split(/[-_]/);
   return {
-    regionCode: cc.toUpperCase(),
+    regionCode: cc?.toUpperCase(),
     language  : (maybeLang && /^[a-z]{2}$/i.test(maybeLang)) ? maybeLang.toLowerCase() : undefined
   };
 }
@@ -141,30 +161,41 @@ const txt = o => [{ type: 'text', text: JSON.stringify(o, null, 2) }];
 
 async function buildSerp (p) {
   const loc      = parseLoc(p.region);
-  const regionId = await resolveRegion(loc.regionCode);
+  const region   = await resolveRegion(p.region ?? loc.regionCode);
   return {
     keyword : p.keyword,
-    ...(regionId ? { region: regionId } : {}),
+    ...(region !== undefined ? { region } : {}),
     ...(p.language||loc.language ? { language:p.language||loc.language } : {}),
     ...(p.searchEngine ? { searchEngine:p.searchEngine } : {}),
     ...(p.maxResults   ? { maxResults : p.maxResults }  : {}),
     ...(p.priority     ? { priority   : p.priority }    : {}),
-    ...(p.isMobile !== undefined ? { isMobile:p.isMobile } : {})
+    ...(p.device ? { isMobile: p.device === 'mobile' } :
+       (p.isMobile !== undefined ? { isMobile:p.isMobile } : {})),
+    ...(p.saveRawData ? { saveRawData: !!p.saveRawData } : {}),
+    ...(p.customUserAgent ? { customUserAgent: p.customUserAgent } : {}),
+    ...(p.customUrlParameter ? { customUrlParameter: p.customUrlParameter } : {}),
+    ...(p.customCookieParameter ? { customCookieParameter: p.customCookieParameter } : {}),
+    ...(p.voiceSearchHighFidelity ? { voiceSearchHighFidelity: !!p.voiceSearchHighFidelity } : {})
   };
 }
 
-async function buildKw (base, list) {
+async function buildKeyword (base) {
   const loc      = parseLoc(base.region);
-  const regionId = await resolveRegion(loc.regionCode);
-  return {
-    keywords    : list,
-    suggestions : base.suggestions ?? false,
-    ...(regionId ? { region: regionId } : {}),
-    ...(base.language||loc.language ? { language:base.language||loc.language } : {})
+  const region   = await resolveRegion(base.region ?? loc.regionCode);
+  const out = {
+    ...(Array.isArray(base.keywords) ? { keywords: base.keywords } : {}),
+    ...(base.url ? { url: base.url } : {}),
+    ...(region !== undefined ? { region } : {}),
+    ...(base.language||loc.language ? { language: base.language||loc.language } : {}),
+    ...(base.source ? { source: base.source } : {}), // "google" (default) | "baidu"
+    ...(base.searchPartners !== undefined ? { searchPartners: !!base.searchPartners } : {}),
+    ...(base.suggestions !== undefined ? { suggestions: !!base.suggestions } : {}),
+    ...(base.priority ? { priority: base.priority } : {}),
   };
+  return out;
 }
 
-/* ───────────────── HTTP ───────────────── */
+/* ───────────────── HTTP small helpers ───────────────── */
 
 async function call (path, opts={}) {
   try {
@@ -177,13 +208,13 @@ async function call (path, opts={}) {
   }
 }
 
+/** Polls /serp/{id} or /keyword/{id} until ready (unless timeout) */
 async function pollReady (path, timeout=180_000) {
-  const isFast = /priority=(REALTIME|INSTANT)/.test(path);
-  let delay    = isFast ? 2_500 : 5_000;
-  const t0     = Date.now();
+  let delay = 5_000;
+  const t0  = Date.now();
   while (true) {
     const j = await call(path);
-    if (j.ready) return j;
+    if (j?.ready) return j;
     if (Date.now() - t0 > timeout) throw new Error('poll timeout');
     await new Promise(r => setTimeout(r, delay));
     delay = Math.min(delay * 1.5, 20_000);
@@ -192,9 +223,9 @@ async function pollReady (path, timeout=180_000) {
 
 /* ───────────────── MCP Server ───────────────── */
 
-const server = new Server({ 
-  name: 'GeoRanker', 
-  version: '1.5.1' 
+const server = new Server({
+  name: 'GeoRanker',
+  version: '1.5.2'
 }, {
   capabilities: {
     tools: {},
@@ -231,122 +262,136 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 
 // Tools
 const tools = [
+  { name: 'heartbeat',        description: 'Check GeoRanker API status', inputSchema:{ type:'object', properties:{} } },
+  { name: 'get_user',         description: 'Get current user information', inputSchema:{ type:'object', properties:{} } },
   {
-    name: 'heartbeat',
-    description: 'Check GeoRanker API status',
+    name: 'list_regions',
+    description: 'List regions (static; safe to cache 24h)',
     inputSchema: {
-      type: 'object',
-      properties: {}
-    }
-  },
-  {
-    name: 'get_user',
-    description: 'Get current user information',
-    inputSchema: {
-      type: 'object',
-      properties: {}
+      type:'object',
+      properties: {
+        countryCode: { type:'string', description:'ISO-3166-1 alpha-2, e.g., US' },
+        type: { type:'string', description:'Region type filter' }
+      }
     }
   },
   {
     name: 'get_whois',
     description: 'Get WHOIS information for a domain',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        domain: { type: 'string', description: 'Domain name' }
-      },
-      required: ['domain']
-    }
+    inputSchema: { type:'object', properties:{ domain:{ type:'string' } }, required:['domain'] }
   },
   {
     name: 'get_technologies',
     description: 'Get technologies used by a domain',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        domain: { type: 'string', description: 'Domain name' }
-      },
-      required: ['domain']
-    }
+    inputSchema: { type:'object', properties:{ domain:{ type:'string' } }, required:['domain'] }
   },
+  /* SERP */
   {
     name: 'create_serp',
     description: 'Create a SERP (Search Engine Results Page) analysis',
     inputSchema: {
-      type: 'object',
-      properties: {
-        keyword: { type: 'string', description: 'Search keyword' },
-        region: { type: 'string', description: 'Region code (e.g., US, GB)' },
-        language: { type: 'string', description: 'Language code' },
-        searchEngine: { type: 'string', description: 'Search engine' },
-        maxResults: { type: 'number', description: 'Maximum results (1-100)' },
-        priority: { type: 'string', enum: ['NORMAL','REALTIME','INSTANT','LOW'] },
-        isMobile: { type: 'boolean', description: 'Mobile search' },
-        synchronous: { type: 'boolean', description: 'Wait for completion' }
+      type:'object',
+      properties:{
+        keyword:{ type:'string' },
+        region:{ type:'string', description:'Canonical region, ISO2, numeric ID, or "US-en" style' },
+        language:{ type:'string' },
+        searchEngine:{ type:'string', description:'e.g., google, bing, yahoo, amazon, yelp, naver, naverwebdocs' },
+        maxResults:{ type:'number', minimum:10, description:'Min 10; upper bound depends on engine/plan' },
+        priority:{ type:'string', enum:['LOW','NORMAL','REALTIME','INSTANT'] },
+        device:{ type:'string', enum:['desktop','mobile'] },
+        isMobile:{ type:'boolean' },
+        saveRawData:{ type:'boolean' },
+        customUserAgent:{ type:'string' },
+        customUrlParameter:{ type:'array', items:{ type:'object', properties:{ name:{type:'string'}, value:{type:['string','null']}}, required:['name']}},
+        customCookieParameter:{ type:'array', items:{ type:'object', properties:{ name:{type:'string'}, value:{type:['string','null']}}, required:['name']}},
+        voiceSearchHighFidelity:{ type:'boolean' },
+        synchronous:{ type:'boolean', description:'If true, server will block (asynchronous:false) up to ~300s' }
       },
-      required: ['keyword']
+      required:['keyword']
     }
   },
+  { name: 'get_serp', description:'Get SERP results by ID', inputSchema:{ type:'object', properties:{ id:{type:'string'} }, required:['id'] } },
+  { name: 'delete_serp', description:'Delete a SERP by ID', inputSchema:{ type:'object', properties:{ id:{type:'string'} }, required:['id'] } },
   {
-    name: 'get_serp',
-    description: 'Get SERP results by ID',
+    name: 'create_serp_list',
+    description: 'Create up to 1000 SERP requests from a list (body = array)',
     inputSchema: {
-      type: 'object',
+      type:'object',
       properties: {
-        id: { type: 'string', description: 'SERP job ID' }
+        requests: { type:'array', items:{ type:'object' }, description:'Each item follows create_serp fields' },
+        synchronous: { type:'boolean' }
       },
-      required: ['id']
+      required:['requests']
     }
   },
+  { name: 'get_serp_list', description:'Read multiple SERPs by IDs', inputSchema:{ type:'object', properties:{ ids:{ type:'array', items:{type:'string'} } }, required:['ids'] } },
+
+  /* Keywords */
   {
     name: 'create_keyword',
-    description: 'Create keyword analysis',
+    description: 'Create keyword analysis (search volume and/or suggestions)',
     inputSchema: {
-      type: 'object',
-      properties: {
-        keywords: { type: 'array', items: { type: 'string' }, description: 'List of keywords' },
-        region: { type: 'string', description: 'Region code' },
-        language: { type: 'string', description: 'Language code' },
-        suggestions: { type: 'boolean', description: 'Include suggestions' },
-        synchronous: { type: 'boolean', description: 'Wait for completion' }
-      },
-      required: ['keywords']
+      type:'object',
+      properties:{
+        keywords:{ type:'array', items:{ type:'string' } },
+        url:{ type:'string', description:'Optional URL to derive suggestions' },
+        region:{ type:'string' },
+        language:{ type:'string' },
+        source:{ type:'string', enum:['google','baidu'], description:'Default: google' },
+        searchPartners:{ type:'boolean' },
+        suggestions:{ type:'boolean' },
+        priority:{ type:'string', enum:['LOW','NORMAL','REALTIME','INSTANT'] },
+        synchronous:{ type:'boolean' }
+      }
     }
   },
+  { name: 'get_keyword', description:'Get keyword results by ID', inputSchema:{ type:'object', properties:{ id:{type:'string'} }, required:['id'] } },
+  { name: 'delete_keyword', description:'Delete a keyword request by ID', inputSchema:{ type:'object', properties:{ id:{type:'string'} }, required:['id'] } },
   {
-    name: 'get_keyword',
-    description: 'Get keyword results by ID',
+    name: 'create_keyword_list',
+    description: 'Create up to 1000 keyword requests (body = array)',
     inputSchema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string', description: 'Keyword job ID' }
+      type:'object',
+      properties:{
+        requests:{ type:'array', items:{ type:'object' } },
+        synchronous:{ type:'boolean' }
       },
-      required: ['id']
+      required:['requests']
     }
   },
+  { name: 'get_keyword_list', description:'Read multiple Keywords by IDs', inputSchema:{ type:'object', properties:{ ids:{type:'array', items:{type:'string'}} }, required:['ids'] } },
+
+  /* Convenience */
   {
     name: 'compare_locations',
-    description: 'Compare SERP results across different locations',
+    description: 'Compare SERP results across locations',
     inputSchema: {
-      type: 'object',
-      properties: {
-        keyword: { type: 'string', description: 'Search keyword' },
-        regions: { type: 'array', items: { type: 'string' }, description: 'List of regions to compare (max 3)' },
-        device: { type: 'string', enum: ['desktop', 'mobile'], description: 'Device type' }
+      type:'object',
+      properties:{
+        keyword:{ type:'string' },
+        regions:{ type:'array', items:{ type:'string' }, description:'List of regions to compare (max ~3)' },
+        device:{ type:'string', enum:['desktop','mobile'] },
+        searchEngine:{ type:'string' },
+        maxResults:{ type:'number', minimum:10 },
+        language:{ type:'string' }
       },
-      required: ['keyword', 'regions']
+      required:['keyword','regions']
     }
   },
+
+  /* Official suggestions (replaces local generator) */
   {
     name: 'search_keywords',
-    description: 'Generate keyword suggestions',
+    description: 'Generate keyword suggestions via GeoRanker API (official)',
     inputSchema: {
-      type: 'object',
-      properties: {
-        seed: { type: 'string', description: 'Seed keyword' },
-        limit: { type: 'number', description: 'Number of suggestions (1-50)', minimum: 1, maximum: 50 }
+      type:'object',
+      properties:{
+        seed:{ type:'string', description:'Seed keyword' },
+        region:{ type:'string', description:'Default US if omitted' },
+        language:{ type:'string' },
+        limit:{ type:'number', minimum:1, maximum:100, description:'Client-side slice of API suggestions' }
       },
-      required: ['seed']
+      required:['seed']
     }
   }
 ];
@@ -355,58 +400,86 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  
+
   try {
     switch (name) {
-      case 'heartbeat':
-        return { content: txt(await call('/heartbeat')) };
-        
-      case 'get_user':
-        return { content: txt(await call('/user')) };
-        
-      case 'get_whois':
-        return { content: txt(await call(`/whois/${encodeURIComponent(args.domain)}`)) };
-        
-      case 'get_technologies':
-        return { content: txt(await call(`/technologies/${encodeURIComponent(args.domain)}`)) };
-        
-      case 'create_serp':
-        const { synchronous = false, ...serpBody } = args;
-        const payload = await buildSerp(serpBody);
-        const job = await call('/serp/new', { method: 'POST', data: payload });
-        const result = synchronous 
-          ? await pollReady(`/serp/${job.id}?priority=${payload.priority || 'NORMAL'}`)
-          : { job_id: job.id, queued: true };
-        return { content: txt(result) };
-          
-      case 'get_serp':
-        return { content: txt(await call(`/serp/${args.id}`)) };
-        
-      case 'create_keyword':
-        const { keywords, synchronous: kwSync = false, ...kwRest } = args;
-        const kwPayload = await buildKw(kwRest, keywords);
-        const kwJob = await call('/keyword/new', { method: 'POST', data: kwPayload });
-        const kwResult = kwSync 
-          ? await pollReady(`/keyword/${kwJob.id}`)
-          : { job_id: kwJob.id, queued: true };
-        return { content: txt(kwResult) };
-          
-      case 'get_keyword':
-        return { content: txt(await call(`/keyword/${args.id}`)) };
-        
-      case 'compare_locations':
-        const { keyword, regions, device = 'desktop' } = args;
+      /* System */
+      case 'heartbeat':       return { content: txt(await call('/heartbeat')) };
+      case 'get_user':        return { content: txt(await call('/user')) };
+
+      /* Regions */
+      case 'list_regions': {
+        const params = { apikey: API_KEY };
+        if (args?.countryCode) params['countryCode'] = args.countryCode;
+        if (args?.type)        params['type']        = args.type;
+        return { content: txt(await http.get('/region/list', { params }).then(r=>r.data)) };
+      }
+
+      /* Intelligence */
+      case 'get_whois':        return { content: txt(await call(`/whois/${encodeURIComponent(args.domain)}`)) };
+      case 'get_technologies': return { content: txt(await call(`/technologies/${encodeURIComponent(args.domain)}`)) };
+
+      /* SERP */
+      case 'create_serp': {
+        const { synchronous = false, ...body } = args || {};
+        const payload = await buildSerp(body);
+        // API recommendation: synchronous => asynchronous:false (blocks up to ~300s on REALTIME/INSTANT)
+        const job = await call('/serp/new', { method:'POST', data:{ ...payload, ...(synchronous ? { asynchronous:false } : {}) } });
+        if (synchronous) return { content: txt(job) }; // API already waited
+        return { content: txt({ job_id: job.id, queued: true }) };
+      }
+      case 'get_serp':        return { content: txt(await call(`/serp/${args.id}`)) };
+      case 'delete_serp':     return { content: txt(await call(`/serp/${args.id}`, { method:'DELETE' })) };
+      case 'create_serp_list': {
+        const { requests = [], synchronous = false } = args || {};
+        // Body must be a JSON array
+        const job = await call('/serp/new/list', { method:'POST', data: requests });
+        if (synchronous) return { content: txt(job) };
+        return { content: txt({ batch_id: job.id || job.batchId || undefined, queued: true, items: requests.length }) };
+      }
+      case 'get_serp_list': {
+        const ids = Array.isArray(args?.ids) ? args.ids : [];
+        return { content: txt(await call('/serp/list', { method:'POST', data: ids })) };
+      }
+
+      /* Keywords */
+      case 'create_keyword': {
+        const { synchronous = false, ...rest } = args || {};
+        const payload = await buildKeyword(rest);
+        const job = await call('/keyword/new', { method:'POST', data:{ ...payload, ...(synchronous ? { asynchronous:false } : {}) } });
+        if (synchronous) return { content: txt(job) };
+        return { content: txt({ job_id: job.id, queued: true }) };
+      }
+      case 'get_keyword':    return { content: txt(await call(`/keyword/${args.id}`)) };
+      case 'delete_keyword': return { content: txt(await call(`/keyword/${args.id}`, { method:'DELETE' })) };
+      case 'create_keyword_list': {
+        const { requests = [], synchronous = false } = args || {};
+        // Body must be a JSON array
+        const job = await call('/keyword/new/list', { method:'POST', data: requests });
+        if (synchronous) return { content: txt(job) };
+        return { content: txt({ batch_id: job.id || job.batchId || undefined, queued: true, items: requests.length }) };
+      }
+      case 'get_keyword_list': {
+        const ids = Array.isArray(args?.ids) ? args.ids : [];
+        return { content: txt(await call('/keyword/list', { method:'POST', data: ids })) };
+      }
+
+      /* Compare */
+      case 'compare_locations': {
+        const { keyword, regions, device='desktop', searchEngine, maxResults, language } = args || {};
         const limit = pLimit(3);
         const results = await Promise.all(regions.map(raw => limit(async () => {
           const loc = parseLoc(raw);
-          const regionId = await resolveRegion(loc.regionCode);
+          const region = await resolveRegion(raw ?? loc.regionCode);
           try {
             const job = await call('/serp/new', {
-              method: 'POST',
-              data: {
+              method:'POST',
+              data:{
                 keyword,
-                ...(regionId ? { region: regionId } : {}),
-                ...(loc.language ? { language: loc.language } : {}),
+                ...(region !== undefined ? { region } : {}),
+                ...(language ? { language } : {}),
+                ...(searchEngine ? { searchEngine } : {}),
+                ...(maxResults ? { maxResults } : {}),
                 isMobile: device === 'mobile'
               }
             });
@@ -415,19 +488,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             return { region: raw, error: e.message };
           }
         })));
-        return { content: txt({ keyword, device, results }) };
-        
-      case 'search_keywords':
-        const { seed, limit: kwLimit = 20 } = args;
-        const extra = ['tips', 'guide', 'best', 'reviews', 'how to', 'near me', 'cost', 'benefits',
-                      'services', 'online', 'free', 'cheap', 'professional', 'top'];
-        return { 
-          content: txt({
-            seed,
-            suggestions: [seed, ...extra.map(x => `${seed} ${x}`)].slice(0, kwLimit)
-          })
-        };
-        
+        return { content: txt({ keyword, device, searchEngine, maxResults, results }) };
+      }
+
+      /* Official suggestions via keyword/new (suggestions:true) */
+      case 'search_keywords': {
+        const { seed, region='US', language, limit=20 } = args || {};
+        const payload = await buildKeyword({
+          keywords: [seed],
+          region,
+          language,
+          source: 'google',
+          suggestions: true
+        });
+        const job = await call('/keyword/new', { method:'POST', data:{ ...payload, asynchronous:false } });
+        const suggestions = Array.isArray(job?.data?.suggestions) ? job.data.suggestions.slice(0, limit) : [];
+        return { content: txt({ seed, suggestions, meta: { from:'GeoRanker API' } }) };
+      }
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -440,7 +518,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 (async () => {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`✅ GeoRanker MCP v1.5.1 ready${VERBOSE ? ' (verbose)' : ''}`);
+  console.error(`✅ GeoRanker MCP v1.5.2 ready${VERBOSE ? ' (verbose)' : ''}`);
 })();
 
 process.on('SIGINT', () => process.exit(0));
