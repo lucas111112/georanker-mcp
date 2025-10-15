@@ -1,6 +1,6 @@
 {
   "name": "georanker-mcp",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "GeoRanker Model‑Context‑Protocol server (MCP)",
   "type": "module",
   "bin": {
@@ -26,7 +26,13 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "keywords": ["georanker","mcp","scraping","serp","keywords"],
+  "keywords": [
+    "georanker",
+    "mcp",
+    "scraping",
+    "serp",
+    "keywords"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
