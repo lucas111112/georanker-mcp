@@ -2483,20 +2483,19 @@ async function main() {
   logger.warn('GeoRanker MCP server running on stdio');
 }
 
-// Only run main when executed directly
-const isMain = (() => {
+// Auto-start when run as a CLI (handles npm bin symlinks)
+function isEntrypoint() {
   try {
-    const thisPath = path.resolve(fileURLToPath(import.meta.url));
-    const argv1 = process.argv[1] ? path.resolve(process.argv[1]) : null;
-    return argv1 === thisPath;
+    const thisFile = fs.realpathSync(fileURLToPath(import.meta.url));
+    const argFile = process.argv[1] ? fs.realpathSync(process.argv[1]) : null;
+    return Boolean(argFile && thisFile === argFile);
   } catch {
-    return false;
+    return true; // fallback: safer to start than to exit silently
   }
-})();
+}
 
-if (isMain) {
+if (isEntrypoint()) {
   main().catch((err) => {
-    // eslint-disable-next-line no-console
     console.error('[georanker-mcp] Fatal error:', err);
     process.exit(1);
   });
