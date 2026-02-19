@@ -1,24 +1,28 @@
 {
   "name": "georanker-mcp",
-  "version": "1.5.2",
-  "description": "GeoRanker Model‑Context‑Protocol server (MCP)",
+  "version": "1.6.0",
+  "description": "GeoRanker Model\u2011Context\u2011Protocol server (MCP)",
   "type": "module",
   "bin": {
     "georanker-mcp": "dist/index.js"
   },
   "scripts": {
-    "build": "esbuild index.js --platform=node --bundle --outfile=dist/index.js",
+    "build": "esbuild index.js --platform=node --bundle --format=esm --banner:js='#!/usr/bin/env node' --outfile=dist/index.js",
     "start": "node dist/index.js",
-    "dev": "node index.js --verbose"
+    "dev": "node index.js --verbose",
+    "prepublishOnly": "npm run build",
+    "start:http": "node dist/index.js --transport http --port 3333",
+    "start:stdio": "node dist/index.js --transport stdio"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^0.5.0",
+    "@modelcontextprotocol/sdk": "^1.27.0",
     "agentkeepalive": "^4.5.0",
     "axios": "^1.6.0",
     "axios-retry": "^3.8.0",
     "dotenv": "^16.3.0",
     "p-limit": "^4.0.0",
-    "zod": "^3.22.0"
+    "zod": "^4.3.6",
+    "express": "^4.18.2"
   },
   "devDependencies": {
     "esbuild": "^0.19.0"
@@ -31,11 +35,22 @@
     "mcp",
     "scraping",
     "serp",
-    "keywords"
+    "keywords",
+    "streamable-http",
+    "openapi",
+    "sse"
   ],
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/lucas111112/georanker-mcp.git"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

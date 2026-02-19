@@ -1,206 +1,219 @@
-# GeoRanker MCP Server v1.5.1
+# GeoRanker MCP Server (AI‑Agent Optimized)
 
-🔍 **Professional SEO & Keyword Research** through the Model Context Protocol
+An **agent-friendly** Model Context Protocol (MCP) server for the **GeoRanker High‑Volume API**.
 
-A powerful MCP server that provides seamless access to GeoRanker's comprehensive SEO and keyword research capabilities, enabling AI assistants to perform advanced search engine optimization analysis.
+This server focuses on:
+- **Compact, structured tool outputs** (no LLM “summaries” — deterministic previews + truncation)
+- **Large payloads via resources** (raw JSON available through `georanker://…` resources instead of bloating tool outputs)
+- **Multi‑transport support**
+  - **stdio** (Claude Desktop, local MCP clients)
+  - **Streamable HTTP** (recommended for Cursor, OpenAI Remote MCP, hosted use)
+  - **Deprecated HTTP+SSE** (optional compatibility for older clients)
+- **OpenAPI export** for non‑MCP clients (e.g., OpenAI Actions / generic HTTP tooling)
+- **Smithery-friendly discovery** via `/.well-known/mcp/server-card.json`
 
-## ✨ Features
+---
 
-### 🎯 **Keyword Research**
-- **Search Volume Analysis** - Get monthly search volumes with 12 months of historical data
-- **Competition Metrics** - Analyze keyword difficulty and competition levels  
-- **Cost-Per-Click Data** - Access Google Ads CPC information
-- **Keyword Suggestions** - Generate related keyword ideas from seed terms
-- **Bulk Processing** - Analyze multiple keywords simultaneously
+## What’s new vs older versions
 
-### 🌍 **SERP Analysis** 
-- **Multi-Region Support** - Compare search results across different countries/regions
-- **Device Targeting** - Desktop vs mobile search result analysis
-- **Real-time Processing** - Get live search engine results
-- **Search Engine Options** - Support for Google and other major search engines
+### Agent-optimized output
+Tool responses are now:
+- **Deterministically shaped** (top-N previews, key fields extracted)
+- **Truncated safely** (string/array/object caps)
+- **Structured** (JSON output + `structuredContent`)
+- **Raw data accessible on-demand** via resources like:
+  - `georanker://serp/{id}`
+  - `georanker://keywords/{id}`
+  - `georanker://regions`
 
-### 🔍 **Domain Intelligence**
-- **WHOIS Lookup** - Complete domain registration information
-- **Technology Detection** - Identify technologies used by websites
-- **Comprehensive Domain Data** - Nameservers, contacts, expiration dates
+### Multi-platform
+Run the same server for:
+- Claude Desktop (**stdio**)
+- Cursor (**Streamable HTTP**)
+- OpenAI Remote MCP (**Streamable HTTP** or HTTP+SSE)
+- LangChain / any Node app (via MCP client OR OpenAPI endpoints)
 
-### ⚡ **Advanced Capabilities**
-- **Location Comparison** - Side-by-side SERP analysis across regions
-- **Asynchronous Processing** - Queue jobs for large-scale analysis
-- **Regional Caching** - Optimized performance with intelligent caching
-- **Priority Processing** - REALTIME, INSTANT, and LOW priority options
+---
 
-## 🚀 Quick Start
-
-### Option 1: One-Line Install (Recommended)
-
-```bash
-# Install and run with your API key
-GEORANKER_API_KEY=your_api_key npx georanker-mcp@latest
-```
-
-### Option 2: Local Development
+## Install
 
 ```bash
-# Clone and setup
-git clone https://github.com/lucas111112/georanker-mcp.git
-cd georanker-mcp
-npm install
-
-# Configure your API key
-cp .env.example .env
-# Edit .env and add: GEORANKER_API_KEY=your_key_here
-
-# Run in development mode
-npm run dev
+npm i -g georanker-mcp
+# or run without install:
+npx georanker-mcp --help
 ```
 
-### Option 3: Production Build
+---
 
+## Configuration
+
+### Environment variables
 ```bash
-# Build optimized version
-npm run build
-npm start
+GEORANKER_API_KEY=your_key_here
+GEORANKER_API_BASE_URL=https://api.highvolume.georanker.com
+
+# Optional tuning
+GR_OUTPUT_MODE=compact          # compact | standard | raw
+GR_MAX_PREVIEW_ITEMS=10
+GR_MAX_STRING_CHARS=800
+
+# HTTP mode
+MCP_TRANSPORT=http              # http | stdio
+MCP_HOST=127.0.0.1
+MCP_PORT=3333
+MCP_PATH=/mcp
+MCP_ENABLE_DEPRECATED_SSE=true  # enables /sse + /messages
+MCP_AUTH_TOKEN=                 # optional bearer token
+MCP_PUBLIC_URL=                 # optional public https url used in server card/openapi
 ```
 
-## 🔧 Configuration
+### CLI flags (override env vars)
+```bash
+georanker-mcp --apikey YOUR_KEY
+georanker-mcp --transport http --host 127.0.0.1 --port 3333 --path /mcp
+georanker-mcp --transport http --auth-token mysecret
+georanker-mcp --legacy   # expose deprecated snake_case tool names
+```
 
-### MCP Client Setup
+---
 
-Add to your MCP configuration file:
+## Run
+
+### 1) stdio mode (Claude Desktop / local)
+```bash
+GEORANKER_API_KEY=... georanker-mcp
+```
+
+### 2) HTTP mode (recommended for Cursor / hosted)
+```bash
+GEORANKER_API_KEY=... georanker-mcp --transport http --port 3333
+```
+
+Endpoints:
+- MCP Streamable HTTP: `http://127.0.0.1:3333/mcp`
+- Deprecated SSE: `http://127.0.0.1:3333/sse` (and `POST /messages`)
+- OpenAPI: `http://127.0.0.1:3333/openapi.json`
+- Server Card: `http://127.0.0.1:3333/.well-known/mcp/server-card.json`
+
+---
+
+## Integration Targets
+
+### Claude Desktop (stdio)
+Add to your Claude Desktop config:
 
 ```json
 {
   "mcpServers": {
     "georanker": {
       "command": "npx",
-      "args": ["-y", "georanker-mcp@latest"],
+      "args": ["-y", "georanker-mcp"],
       "env": {
-        "GEORANKER_API_KEY": "your_georanker_api_key_here"
+        "GEORANKER_API_KEY": "YOUR_KEY"
       }
     }
   }
 }
 ```
 
-### Environment Variables
+### Cursor (Streamable HTTP)
+1. Run the server in HTTP mode (`--transport http`)
+2. In Cursor, add an MCP server with URL:
+   - `http://127.0.0.1:3333/mcp` (local)
+   - or your deployed HTTPS URL for hosted usage
 
-| Variable | Description | Default |
-|----------|-------------|----------|
-| `GEORANKER_API_KEY` | Your GeoRanker API key (required) | - |
-| `GR_VERBOSE` | Enable verbose logging | `false` |
-| `GEORANKER_API_BASE_URL` | Custom API endpoint | `https://api.highvolume.georanker.com` |
+### OpenAI (Remote MCP)
+Deploy the HTTP server to a public HTTPS URL, then configure a **remote MCP tool** pointing to:
+- `https://your-host/mcp` (Streamable HTTP)
+- or `https://your-host/sse` (deprecated HTTP+SSE)
 
-### Command Line Options
-
-```bash
-# Pass API key via command line
-npx georanker-mcp --apikey your_key_here
-
-# Enable verbose mode
-npx georanker-mcp --verbose
-```
-
-## 📊 Available Tools
-
-### **Keyword Research**
-- `create_keyword` - Analyze keywords for search volume, CPC, and competition
-- `get_keyword` - Retrieve keyword analysis results by job ID
-- `search_keywords` - Generate keyword suggestions from seed terms
-
-### **SERP Analysis**
-- `create_serp` - Create search engine results page analysis
-- `get_serp` - Get SERP analysis results by job ID
-- `compare_locations` - Compare SERP results across different regions
-
-### **Domain Tools**
-- `get_whois` - Comprehensive WHOIS domain information
-- `get_technologies` - Detect technologies used by websites
-
-### **System Tools**
-- `heartbeat` - Check API status and health
-- `get_user` - Get current user account information
-
-## 🔍 Example Usage
-
-### Keyword Research
-```javascript
-// Analyze keyword metrics
-const keywords = await georanker.create_keyword({
-  keywords: ["SEO tools", "keyword research", "SERP analysis"],
-  region: "US",
-  synchronous: true
-});
-
-// Generate keyword suggestions
-const suggestions = await georanker.search_keywords({
-  seed: "coffee shop",
-  limit: 10
-});
-```
-
-### Location Comparison
-```javascript
-// Compare search results across regions
-const comparison = await georanker.compare_locations({
-  keyword: "best pizza",
-  regions: ["US", "GB", "CA"],
-  device: "mobile"
-});
-```
-
-### Domain Analysis
-```javascript
-// Get domain information
-const whois = await georanker.get_whois({
-  domain: "example.com"
-});
-
-const tech = await georanker.get_technologies({
-  domain: "shopify.com"
-});
-```
-
-## 🌍 Supported Regions
-
-GeoRanker supports 100+ countries and regions including:
-- **Americas**: US, CA, BR, MX, AR, CL, CO, PE
-- **Europe**: GB, DE, FR, IT, ES, NL, PL, SE, NO
-- **Asia-Pacific**: JP, CN, IN, AU, KR, SG, TH, MY
-- **And many more...**
-
-Use region codes like `US`, `GB`, `DE` or specific regional formats like `US-NY` for New York.
-
-## 📈 Performance & Limits
-
-- **Concurrent Requests**: Up to 64 simultaneous connections
-- **Timeout**: 30 seconds per request
-- **Retry Logic**: Automatic retry with exponential backoff
-- **Caching**: 24-hour region data caching
-- **Rate Limiting**: Respects GeoRanker API limits
-
-## 🛠️ Requirements
-
-- **Node.js**: Version 18.0.0 or higher
-- **GeoRanker API Key**: Get yours at [georanker.com](https://georanker.com)
-- **MCP Client**: Claude Desktop, or any MCP-compatible application
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-## 🤝 Contributing
-
-Contributions welcome! Please read our contributing guidelines and submit pull requests.
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/lucas111112/georanker-mcp/issues)
-- **Documentation**: [GeoRanker API Docs](https://georanker.com/docs)
-- **Community**: Join our Discord for discussions
+### LangChain / Node apps
+Option A: use an MCP client to connect to the MCP endpoint.
+Option B: call the OpenAPI endpoints under `/api/v1/*`.
 
 ---
 
-**Built with ❤️ for the MCP ecosystem**
+## Tool Names (new)
 
-*Empowering AI assistants with professional SEO capabilities*
+The recommended tool names are namespaced:
+
+- `georanker.serp.create`
+- `georanker.serp.get`
+- `georanker.serp.delete`
+- `georanker.serp.batch_create`
+- `georanker.serp.batch_get`
+- `georanker.serp.compare_locations`
+
+- `georanker.keywords.create`
+- `georanker.keywords.get`
+- `georanker.keywords.delete`
+- `georanker.keywords.batch_create`
+- `georanker.keywords.batch_get`
+- `georanker.keywords.suggest`
+
+- `georanker.domain.whois`
+- `georanker.domain.technologies`
+
+- `georanker.regions.list`
+- `georanker.account.get`
+- `georanker.health.check`
+
+### Legacy tool names
+Set `GR_ENABLE_LEGACY_TOOL_NAMES=true` or run with `--legacy` to also expose the old snake_case tools.
+
+---
+
+## Output Format
+
+All tools return compact JSON shaped like:
+
+```json
+{
+  "ok": true,
+  "action": "georanker.serp.get",
+  "generated_at": "2026-02-19T12:00:00.000Z",
+  "request": { "id": "..." },
+  "data": { "...compact preview..." },
+  "links": { "raw_resource": "georanker://serp/..." }
+}
+```
+
+If a tool fails, it returns `ok:false` and the MCP tool result will include `isError:true`.
+
+---
+
+## Publishing
+
+### npm
+1. Build:
+   ```bash
+   npm run build
+   ```
+2. Login:
+   ```bash
+   npm login
+   ```
+3. Publish:
+   ```bash
+   npm publish --access public
+   ```
+
+### Smithery MCP Registry
+**URL publish (recommended for hosted servers):**
+- Make sure Streamable HTTP is available at `/mcp`
+- Ensure server card exists at `/.well-known/mcp/server-card.json`
+
+Then publish from the Smithery UI or via CLI:
+```bash
+smithery mcp publish "https://your-host/mcp" -n @lucas111112/georanker-mcp
+```
+
+**Local publish (stdio):**
+```bash
+smithery mcp publish --name @lucas111112/georanker-mcp --transport stdio
+```
+
+---
+
+## License
+MIT
