@@ -50,7 +50,7 @@ npx georanker-mcp --help
 ### Environment variables
 ```bash
 GEORANKER_API_KEY=your_key_here
-GEORANKER_API_BASE_URL=https://api.highvolume.georanker.com
+GEORANKER_API_BASE_URL=https://api.highvolume.georanker_com
 
 # Optional tuning
 GR_OUTPUT_MODE=compact          # compact | standard | raw
@@ -137,26 +137,26 @@ Option B: call the OpenAPI endpoints under `/api/v1/*`.
 
 The recommended tool names are namespaced:
 
-- `georanker.serp.create`
-- `georanker.serp.get`
-- `georanker.serp.delete`
-- `georanker.serp.batch_create`
-- `georanker.serp.batch_get`
-- `georanker.serp.compare_locations`
+- `georanker_serp.create`
+- `georanker_serp.get`
+- `georanker_serp.delete`
+- `georanker_serp.batch_create`
+- `georanker_serp.batch_get`
+- `georanker_serp.compare_locations`
 
-- `georanker.keywords.create`
-- `georanker.keywords.get`
-- `georanker.keywords.delete`
-- `georanker.keywords.batch_create`
-- `georanker.keywords.batch_get`
-- `georanker.keywords.suggest`
+- `georanker_keywords.create`
+- `georanker_keywords.get`
+- `georanker_keywords.delete`
+- `georanker_keywords.batch_create`
+- `georanker_keywords.batch_get`
+- `georanker_keywords.suggest`
 
-- `georanker.domain.whois`
-- `georanker.domain.technologies`
+- `georanker_domain.whois`
+- `georanker_domain.technologies`
 
-- `georanker.regions.list`
-- `georanker.account.get`
-- `georanker.health.check`
+- `georanker_regions.list`
+- `georanker_account.get`
+- `georanker_health.check`
 
 ### Legacy tool names
 Set `GR_ENABLE_LEGACY_TOOL_NAMES=true` or run with `--legacy` to also expose the old snake_case tools.
@@ -170,7 +170,7 @@ All tools return compact JSON shaped like:
 ```json
 {
   "ok": true,
-  "action": "georanker.serp.get",
+  "action": "georanker_serp.get",
   "generated_at": "2026-02-19T12:00:00.000Z",
   "request": { "id": "..." },
   "data": { "...compact preview..." },

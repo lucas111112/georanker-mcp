@@ -40,7 +40,7 @@ import * as z from 'zod/v4';
 /** -----------------------------
  * Version
  * ------------------------------*/
-const PACKAGE_VERSION = '1.6.0'; // Keep in sync with package.json
+const PACKAGE_VERSION = '1.6.1'; // Keep in sync with package.json
 
 /** -----------------------------
  * Config Schema (Smithery-friendly)
@@ -858,7 +858,7 @@ function createHandlers({ call, logger, defaults }) {
 
   return {
     async healthCheck() {
-      const action = 'georanker.health.check';
+      const action = 'georanker_health_check';
       try {
         const raw = await call('/heartbeat', { method: 'GET' });
         rawCacheSet('heartbeat', raw);
@@ -874,7 +874,7 @@ function createHandlers({ call, logger, defaults }) {
     },
 
     async accountGet() {
-      const action = 'georanker.account.get';
+      const action = 'georanker_account_get';
       try {
         const raw = await call('/user', { method: 'GET' });
         rawCacheSet('user', raw);
@@ -886,7 +886,7 @@ function createHandlers({ call, logger, defaults }) {
     },
 
     async regionsList() {
-      const action = 'georanker.regions.list';
+      const action = 'georanker_regions_list';
       try {
         const regions = await loadRegions(call, logger);
         const meta = { truncated: false, truncatedPaths: [] };
@@ -908,7 +908,7 @@ function createHandlers({ call, logger, defaults }) {
     },
 
     async domainWhois({ domain, outputMode: mode }) {
-      const action = 'georanker.domain.whois';
+      const action = 'georanker_domain_whois';
       const request = { domain };
       try {
         const raw = await call('/whois', { method: 'GET', params: { domain } });
@@ -939,7 +939,7 @@ function createHandlers({ call, logger, defaults }) {
     },
 
     async domainTechnologies({ domain, outputMode: mode }) {
-      const action = 'georanker.domain.technologies';
+      const action = 'georanker_domain_technologies';
       const request = { domain };
       try {
         const raw = await call('/technologies', { method: 'GET', params: { domain } });
@@ -994,7 +994,7 @@ function createHandlers({ call, logger, defaults }) {
     },
 
     async serpCreate(args) {
-      const action = 'georanker.serp.create';
+      const action = 'georanker_serp_create';
       const request = omitUndefined({ keyword: args.keyword, region: args.region, device: args.device, searchEngine: args.searchEngine });
       const mode = outputMode(args.outputMode);
 
@@ -1014,7 +1014,7 @@ id,
               ready: Boolean(raw?.ready),
               status: raw?.ready ? 'ready' : 'queued',
               next: omitUndefined({
-                poll_tool: 'georanker.serp.get',
+                poll_tool: 'georanker_serp_get',
                 poll_args: { id, outputMode: mode },
               }),
 }),
@@ -1038,7 +1038,7 @@ id,
     },
 
     async serpGet({ id, outputMode: mode, maxPreviewItems }) {
-      const action = 'georanker.serp.get';
+      const action = 'georanker_serp_get';
       const request = { id };
       const oMode = outputMode(mode);
       const previewN = maxPreviewItems ?? maxPreviewDefault;
@@ -1073,7 +1073,7 @@ id,
     },
 
     async serpDelete({ id }) {
-      const action = 'georanker.serp.delete';
+      const action = 'georanker_serp_delete';
       const request = { id };
       try {
         const raw = await call(`/serp/${id}`, { method: 'DELETE' });
@@ -1086,7 +1086,7 @@ id,
     },
 
     async serpBatchCreate({ requests, outputMode: mode }) {
-      const action = 'georanker.serp.batch_create';
+      const action = 'georanker_serp_batch_create';
       const request = { count: requests?.length ?? 0 };
       const oMode = outputMode(mode);
 
@@ -1134,7 +1134,7 @@ id,
           note: items.length !== ids.length ? 'Some returned items were missing ids.' : undefined,
           next: ids.length
             ? {
-                poll_tool: 'georanker.serp.batch_get',
+                poll_tool: 'georanker_serp_batch_get',
                 poll_args: { ids: ids.slice(0, 1000), outputMode: oMode },
               }
             : undefined,
@@ -1147,7 +1147,7 @@ id,
     },
 
     async serpBatchGet({ ids, outputMode: mode, maxPreviewItems }) {
-      const action = 'georanker.serp.batch_get';
+      const action = 'georanker_serp_batch_get';
       const request = { count: ids?.length ?? 0 };
       const oMode = outputMode(mode);
       const previewN = maxPreviewItems ?? maxPreviewDefault;
@@ -1186,7 +1186,7 @@ id,
     },
 
     async keywordsCreate(args) {
-      const action = 'georanker.keywords.create';
+      const action = 'georanker_keywords_create';
       const request = { count: args.keywords?.length ?? 0, region: args.region, source: args.source };
       const mode = outputMode(args.outputMode);
 
@@ -1205,7 +1205,7 @@ id,
               ready: Boolean(raw?.ready),
               status: raw?.ready ? 'ready' : 'queued',
               next: omitUndefined({
-                poll_tool: 'georanker.keywords.get',
+                poll_tool: 'georanker_keywords_get',
                 poll_args: { id, outputMode: mode },
               }),
 }),
@@ -1228,7 +1228,7 @@ id,
     },
 
     async keywordsGet({ id, outputMode: mode, maxPreviewItems }) {
-      const action = 'georanker.keywords.get';
+      const action = 'georanker_keywords_get';
       const request = { id };
       const oMode = outputMode(mode);
       const previewN = maxPreviewItems ?? maxPreviewDefault;
@@ -1262,7 +1262,7 @@ id,
     },
 
     async keywordsDelete({ id }) {
-      const action = 'georanker.keywords.delete';
+      const action = 'georanker_keywords_delete';
       const request = { id };
       try {
         const raw = await call(`/keyword/${id}`, { method: 'DELETE' });
@@ -1275,7 +1275,7 @@ id,
     },
 
     async keywordsBatchCreate({ requests, outputMode: mode }) {
-      const action = 'georanker.keywords.batch_create';
+      const action = 'georanker_keywords_batch_create';
       const request = { count: requests?.length ?? 0 };
       const oMode = outputMode(mode);
 
@@ -1313,7 +1313,7 @@ id,
           ids,
           next: ids.length
             ? {
-                poll_tool: 'georanker.keywords.batch_get',
+                poll_tool: 'georanker_keywords_batch_get',
                 poll_args: { ids, outputMode: oMode },
               }
             : undefined,
@@ -1326,7 +1326,7 @@ id,
     },
 
     async keywordsBatchGet({ ids, outputMode: mode, maxPreviewItems }) {
-      const action = 'georanker.keywords.batch_get';
+      const action = 'georanker_keywords_batch_get';
       const request = { count: ids?.length ?? 0 };
       const oMode = outputMode(mode);
       const previewN = maxPreviewItems ?? maxPreviewDefault;
@@ -1364,7 +1364,7 @@ id,
     },
 
     async keywordsSuggest({ seed, region, source, limit }) {
-      const action = 'georanker.keywords.suggest';
+      const action = 'georanker_keywords_suggest';
       const request = { seed, region, source, limit };
       try {
         // This uses the existing /keyword/new endpoint with suggestions=true in a synchronous request
@@ -1393,7 +1393,7 @@ id,
     },
 
     async serpCompareLocations(args) {
-      const action = 'georanker.serp.compare_locations';
+      const action = 'georanker_serp_compare_locations';
       const request = { keyword: args.keyword, regions: args.regions, device: args.device, searchEngine: args.searchEngine };
       const previewN = Math.min(args.maxResults ?? maxPreviewDefault, 10);
       const timeoutMs = args.timeoutMs ?? 180_000;
@@ -1602,7 +1602,7 @@ export function createServer(config = {}) {
    * Register tools (new names)
    * ------------------------------*/
   server.registerTool(
-    'georanker.health.check',
+    'georanker_health_check',
     {
       title: 'GeoRanker API Health Check',
       description:
@@ -1613,7 +1613,7 @@ export function createServer(config = {}) {
   );
 
   server.registerTool(
-    'georanker.account.get',
+    'georanker_account_get',
     {
       title: 'GeoRanker Account Info',
       description:
@@ -1624,7 +1624,7 @@ export function createServer(config = {}) {
   );
 
   server.registerTool(
-    'georanker.regions.list',
+    'georanker_regions_list',
     {
       title: 'List GeoRanker Regions',
       description:
@@ -1635,7 +1635,7 @@ export function createServer(config = {}) {
   );
 
   server.registerTool(
-    'georanker.domain.whois',
+    'georanker_domain_whois',
     {
       title: 'WHOIS Lookup',
       description:
@@ -1646,7 +1646,7 @@ export function createServer(config = {}) {
   );
 
   server.registerTool(
-    'georanker.domain.technologies',
+    'georanker_domain_technologies',
     {
       title: 'Technology Detection',
       description:
@@ -1657,7 +1657,7 @@ export function createServer(config = {}) {
   );
 
   server.registerTool(
-    'georanker.serp.create',
+    'georanker_serp_create',
     {
       title: 'Create SERP Job',
       description:
@@ -1668,7 +1668,7 @@ export function createServer(config = {}) {
   );
 
   server.registerTool(
-    'georanker.serp.get',
+    'georanker_serp_get',
     {
       title: 'Get SERP by ID',
       description:
@@ -1679,7 +1679,7 @@ export function createServer(config = {}) {
   );
 
   server.registerTool(
-    'georanker.serp.delete',
+    'georanker_serp_delete',
     {
       title: 'Delete SERP Job',
       description: 'Delete a SERP job by id (cleanup).',
@@ -1689,7 +1689,7 @@ export function createServer(config = {}) {
   );
 
   server.registerTool(
-    'georanker.serp.batch_create',
+    'georanker_serp_batch_create',
     {
       title: 'Create SERP Jobs in Bulk',
       description:
@@ -1719,7 +1719,7 @@ export function createServer(config = {}) {
   );
 
   server.registerTool(
-    'georanker.serp.batch_get',
+    'georanker_serp_batch_get',
     {
       title: 'Get Multiple SERPs',
       description:
@@ -1730,7 +1730,7 @@ export function createServer(config = {}) {
   );
 
   server.registerTool(
-    'georanker.serp.compare_locations',
+    'georanker_serp_compare_locations',
     {
       title: 'Compare SERP Across Regions',
       description:
@@ -1741,7 +1741,7 @@ export function createServer(config = {}) {
   );
 
   server.registerTool(
-    'georanker.keywords.create',
+    'georanker_keywords_create',
     {
       title: 'Create Keyword Report',
       description:
@@ -1752,7 +1752,7 @@ export function createServer(config = {}) {
   );
 
   server.registerTool(
-    'georanker.keywords.get',
+    'georanker_keywords_get',
     {
       title: 'Get Keyword Report by ID',
       description:
@@ -1763,7 +1763,7 @@ export function createServer(config = {}) {
   );
 
   server.registerTool(
-    'georanker.keywords.delete',
+    'georanker_keywords_delete',
     {
       title: 'Delete Keyword Report',
       description: 'Delete a keyword report by id (cleanup).',
@@ -1773,7 +1773,7 @@ export function createServer(config = {}) {
   );
 
   server.registerTool(
-    'georanker.keywords.batch_create',
+    'georanker_keywords_batch_create',
     {
       title: 'Create Keyword Reports in Bulk',
       description:
@@ -1799,7 +1799,7 @@ export function createServer(config = {}) {
   );
 
   server.registerTool(
-    'georanker.keywords.batch_get',
+    'georanker_keywords_batch_get',
     {
       title: 'Get Multiple Keyword Reports',
       description:
@@ -1810,7 +1810,7 @@ export function createServer(config = {}) {
   );
 
   server.registerTool(
-    'georanker.keywords.suggest',
+    'georanker_keywords_suggest',
     {
       title: 'Keyword Suggestions',
       description:
@@ -1829,66 +1829,66 @@ export function createServer(config = {}) {
       description: `Deprecated tool name. Use "${newName}" instead.`,
     });
 
-    server.registerTool('heartbeat', { ...legacy('heartbeat', 'georanker.health.check'), inputSchema: {} }, async () =>
+    server.registerTool('heartbeat', { ...legacy('heartbeat', 'georanker_health_check'), inputSchema: {} }, async () =>
       toolResultFromObject(await handlers.healthCheck())
     );
-    server.registerTool('get_user', { ...legacy('get_user', 'georanker.account.get'), inputSchema: {} }, async () =>
+    server.registerTool('get_user', { ...legacy('get_user', 'georanker_account_get'), inputSchema: {} }, async () =>
       toolResultFromObject(await handlers.accountGet())
     );
-    server.registerTool('list_regions', { ...legacy('list_regions', 'georanker.regions.list'), inputSchema: {} }, async () =>
+    server.registerTool('list_regions', { ...legacy('list_regions', 'georanker_regions_list'), inputSchema: {} }, async () =>
       toolResultFromObject(await handlers.regionsList())
     );
 
-    server.registerTool('get_whois', { ...legacy('get_whois', 'georanker.domain.whois'), inputSchema: DomainSchema }, async (args) =>
+    server.registerTool('get_whois', { ...legacy('get_whois', 'georanker_domain_whois'), inputSchema: DomainSchema }, async (args) =>
       toolResultFromObject(await handlers.domainWhois(args))
     );
     server.registerTool(
       'get_technologies',
-      { ...legacy('get_technologies', 'georanker.domain.technologies'), inputSchema: DomainSchema },
+      { ...legacy('get_technologies', 'georanker_domain_technologies'), inputSchema: DomainSchema },
       async (args) => toolResultFromObject(await handlers.domainTechnologies(args))
     );
 
-    server.registerTool('create_serp', { ...legacy('create_serp', 'georanker.serp.create'), inputSchema: SerpCreateSchema }, async (args) =>
+    server.registerTool('create_serp', { ...legacy('create_serp', 'georanker_serp_create'), inputSchema: SerpCreateSchema }, async (args) =>
       toolResultFromObject(await handlers.serpCreate(args))
     );
-    server.registerTool('get_serp', { ...legacy('get_serp', 'georanker.serp.get'), inputSchema: SerpGetSchema }, async (args) =>
+    server.registerTool('get_serp', { ...legacy('get_serp', 'georanker_serp_get'), inputSchema: SerpGetSchema }, async (args) =>
       toolResultFromObject(await handlers.serpGet(args))
     );
-    server.registerTool('delete_serp', { ...legacy('delete_serp', 'georanker.serp.delete'), inputSchema: { id: z.string() } }, async (args) =>
+    server.registerTool('delete_serp', { ...legacy('delete_serp', 'georanker_serp_delete'), inputSchema: { id: z.string() } }, async (args) =>
       toolResultFromObject(await handlers.serpDelete(args))
     );
 
     server.registerTool(
       'create_keyword',
-      { ...legacy('create_keyword', 'georanker.keywords.create'), inputSchema: KeywordCreateSchema },
+      { ...legacy('create_keyword', 'georanker_keywords_create'), inputSchema: KeywordCreateSchema },
       async (args) => toolResultFromObject(await handlers.keywordsCreate(args))
     );
     server.registerTool(
       'get_keyword',
-      { ...legacy('get_keyword', 'georanker.keywords.get'), inputSchema: KeywordGetSchema },
+      { ...legacy('get_keyword', 'georanker_keywords_get'), inputSchema: KeywordGetSchema },
       async (args) => toolResultFromObject(await handlers.keywordsGet(args))
     );
     server.registerTool(
       'delete_keyword',
-      { ...legacy('delete_keyword', 'georanker.keywords.delete'), inputSchema: { id: z.string() } },
+      { ...legacy('delete_keyword', 'georanker_keywords_delete'), inputSchema: { id: z.string() } },
       async (args) => toolResultFromObject(await handlers.keywordsDelete(args))
     );
     server.registerTool(
       'search_keywords',
-      { ...legacy('search_keywords', 'georanker.keywords.suggest'), inputSchema: KeywordSuggestSchema },
+      { ...legacy('search_keywords', 'georanker_keywords_suggest'), inputSchema: KeywordSuggestSchema },
       async (args) => toolResultFromObject(await handlers.keywordsSuggest(args))
     );
 
     server.registerTool(
       'compare_locations',
-      { ...legacy('compare_locations', 'georanker.serp.compare_locations'), inputSchema: CompareLocationsSchema },
+      { ...legacy('compare_locations', 'georanker_serp_compare_locations'), inputSchema: CompareLocationsSchema },
       async (args) => toolResultFromObject(await handlers.serpCompareLocations(args))
     );
 
     server.registerTool(
       'create_serp_list',
       {
-        ...legacy('create_serp_list', 'georanker.serp.batch_create'),
+        ...legacy('create_serp_list', 'georanker_serp_batch_create'),
         inputSchema: {
           requests: z.array(z.any()).min(1).max(1000),
           outputMode: OutputModeEnum.optional(),
@@ -1899,14 +1899,14 @@ export function createServer(config = {}) {
 
     server.registerTool(
       'get_serp_list',
-      { ...legacy('get_serp_list', 'georanker.serp.batch_get'), inputSchema: SerpListGetSchema },
+      { ...legacy('get_serp_list', 'georanker_serp_batch_get'), inputSchema: SerpListGetSchema },
       async (args) => toolResultFromObject(await handlers.serpBatchGet(args))
     );
 
     server.registerTool(
       'create_keyword_list',
       {
-        ...legacy('create_keyword_list', 'georanker.keywords.batch_create'),
+        ...legacy('create_keyword_list', 'georanker_keywords_batch_create'),
         inputSchema: {
           requests: z.array(z.any()).min(1).max(1000),
           outputMode: OutputModeEnum.optional(),
@@ -1917,7 +1917,7 @@ export function createServer(config = {}) {
 
     server.registerTool(
       'get_keyword_list',
-      { ...legacy('get_keyword_list', 'georanker.keywords.batch_get'), inputSchema: KeywordListGetSchema },
+      { ...legacy('get_keyword_list', 'georanker_keywords_batch_get'), inputSchema: KeywordListGetSchema },
       async (args) => toolResultFromObject(await handlers.keywordsBatchGet(args))
     );
   }
@@ -2137,10 +2137,10 @@ async function startHttpServer({ config, logger }) {
     // Do NOT require auth for discovery (Smithery scanning may need it). If you want, put it behind auth.
     const derived = `${req.protocol}://${req.get('host')}`;
     const toolsPreview = [
-      { name: 'georanker.serp.create', description: 'Create geo-located SERP job', inputSchema: { type: 'object' } },
-      { name: 'georanker.serp.get', description: 'Get SERP job result by id', inputSchema: { type: 'object' } },
-      { name: 'georanker.keywords.create', description: 'Create keyword report', inputSchema: { type: 'object' } },
-      { name: 'georanker.keywords.get', description: 'Get keyword report by id', inputSchema: { type: 'object' } },
+      { name: 'georanker_serp_create', description: 'Create geo-located SERP job', inputSchema: { type: 'object' } },
+      { name: 'georanker_serp_get', description: 'Get SERP job result by id', inputSchema: { type: 'object' } },
+      { name: 'georanker_keywords_create', description: 'Create keyword report', inputSchema: { type: 'object' } },
+      { name: 'georanker_keywords_get', description: 'Get keyword report by id', inputSchema: { type: 'object' } },
     ];
     res.json(
       buildServerCard({
@@ -2483,19 +2483,20 @@ async function main() {
   logger.warn('GeoRanker MCP server running on stdio');
 }
 
-// Auto-start when run as a CLI (handles npm bin symlinks)
-function isEntrypoint() {
+// Only run main when executed directly
+const isMain = (() => {
   try {
-    const thisFile = fs.realpathSync(fileURLToPath(import.meta.url));
-    const argFile = process.argv[1] ? fs.realpathSync(process.argv[1]) : null;
-    return Boolean(argFile && thisFile === argFile);
+    const thisPath = path.resolve(fileURLToPath(import.meta.url));
+    const argv1 = process.argv[1] ? path.resolve(process.argv[1]) : null;
+    return argv1 === thisPath;
   } catch {
-    return true; // fallback: safer to start than to exit silently
+    return false;
   }
-}
+})();
 
-if (isEntrypoint()) {
+if (isMain) {
   main().catch((err) => {
+    // eslint-disable-next-line no-console
     console.error('[georanker-mcp] Fatal error:', err);
     process.exit(1);
   });

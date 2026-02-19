@@ -1,6 +1,6 @@
 {
   "name": "georanker-mcp",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "GeoRanker Model\u2011Context\u2011Protocol server (MCP)",
   "type": "module",
   "bin": {
